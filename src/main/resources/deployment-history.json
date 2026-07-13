@@ -1,0 +1,10 @@
+[
+  {"deploymentId":"DEP-9001","service":"checkout-api","version":"2.18.4","deployedAt":"2026-07-12T07:20:00Z","deployedBy":"release-bot","changeSummary":"Enabled checkout tracing and updated connection-pool settings","status":"SUCCESS"},
+  {"deploymentId":"DEP-8995","service":"checkout-api","version":"2.18.3","deployedAt":"2026-07-10T09:15:00Z","deployedBy":"release-bot","changeSummary":"Security dependency update","status":"SUCCESS"},
+  {"deploymentId":"DEP-9002","service":"payment-gateway","version":"4.7.1","deployedAt":"2026-07-12T06:45:00Z","deployedBy":"payments-team","changeSummary":"Updated primary provider timeout configuration","status":"SUCCESS"},
+  {"deploymentId":"DEP-8984","service":"order-worker","version":"3.12.0","deployedAt":"2026-07-08T13:30:00Z","deployedBy":"release-bot","changeSummary":"Added order event schema validation","status":"SUCCESS"},
+  {"deploymentId":"DEP-9003","service":"identity-service","version":"5.4.2","deployedAt":"2026-07-12T08:05:00Z","deployedBy":"identity-team","changeSummary":"Rotated OAuth client configuration","status":"SUCCESS"},
+  {"deploymentId":"DEP-8991","service":"pricing-service","version":"1.29.0","deployedAt":"2026-07-11T11:00:00Z","deployedBy":"release-bot","changeSummary":"Promotion-rule cache optimisation","status":"SUCCESS"},
+  {"deploymentId":"DEP-9004","service":"search-api","version":"6.3.1","deployedAt":"2026-07-12T05:15:00Z","deployedBy":"search-team","changeSummary":"Search index client upgrade","status":"FAILED"},
+  {"deploymentId":"DEP-9005","service":"reporting-api","version":"1.8.0","deployedAt":"2026-07-12T08:40:00Z","deployedBy":"reporting-team","changeSummary":"Replaced the CSV timestamp formatter and changed report timezone handling to UTC","status":"SUCCESS"}
+]
