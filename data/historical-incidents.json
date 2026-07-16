@@ -1,0 +1,92 @@
+[
+  {
+    "id": "INC-1001",
+    "title": "Checkout requests timing out after morning traffic increase",
+    "service": "checkout-api",
+    "severity": "SEV-1",
+    "symptoms": "p95 latency above 20 seconds and 504 responses during checkout after morning traffic increase.",
+    "rootCause": "Database connection pool exhausted after traffic surge.",
+    "resolution": "Raised pool capacity, cleared leaked connections, and added saturation alerts."
+  },
+  {
+    "id": "INC-1013",
+    "title": "Card payment authorization failing after morning traffic increase",
+    "service": "payment-gateway",
+    "severity": "SEV-1",
+    "symptoms": "Payment authorizations return 502 errors and provider timeout rate is elevated after morning traffic increase.",
+    "rootCause": "Payment provider circuit breaker opened after upstream latency increase.",
+    "resolution": "Failed over to secondary provider and tuned circuit-breaker thresholds."
+  },
+  {
+    "id": "INC-1025",
+    "title": "Order fulfillment delayed after morning traffic increase",
+    "service": "order-worker",
+    "severity": "SEV-2",
+    "symptoms": "Kafka consumer lag grows and fulfillment events are delayed after morning traffic increase.",
+    "rootCause": "Malformed event caused consumer retry loop.",
+    "resolution": "Moved bad event to DLQ and added schema validation."
+  },
+  {
+    "id": "INC-1037",
+    "title": "Inventory reservation failures after morning traffic increase",
+    "service": "inventory-service",
+    "severity": "SEV-2",
+    "symptoms": "Reserve requests return conflicts while stock cache differs from database after morning traffic increase.",
+    "rootCause": "Redis inventory cache was stale after invalidation failure.",
+    "resolution": "Flushed affected keys and repaired cache invalidation consumer."
+  },
+  {
+    "id": "INC-1049",
+    "title": "User login rejected after morning traffic increase",
+    "service": "identity-service",
+    "severity": "SEV-2",
+    "symptoms": "Users receive 401 responses after login and token validation fails after morning traffic increase.",
+    "rootCause": "OAuth signing certificate expired.",
+    "resolution": "Rotated certificate and added expiry alerting."
+  },
+  {
+    "id": "INC-1061",
+    "title": "Email notifications delayed after morning traffic increase",
+    "service": "notification-service",
+    "severity": "SEV-3",
+    "symptoms": "Email queue depth rises and delivery latency exceeds SLA after morning traffic increase.",
+    "rootCause": "SMTP provider rate limit was exceeded.",
+    "resolution": "Throttled sends, retried backlog, and added rate-limit controls."
+  },
+  {
+    "id": "INC-1073",
+    "title": "Customer profile API slow after morning traffic increase",
+    "service": "customer-api",
+    "severity": "SEV-2",
+    "symptoms": "Profile reads have high p95 latency and intermittent 503 errors after morning traffic increase.",
+    "rootCause": "Downstream customer database replica was overloaded.",
+    "resolution": "Rerouted reads to healthy replica and added replica capacity."
+  },
+  {
+    "id": "INC-1085",
+    "title": "Incorrect price shown at checkout after morning traffic increase",
+    "service": "pricing-service",
+    "severity": "SEV-2",
+    "symptoms": "Checkout price differs from catalog price for active promotions after morning traffic increase.",
+    "rootCause": "Promotion cache served stale rule version.",
+    "resolution": "Invalidated promotion cache and added version-consistency checks."
+  },
+  {
+    "id": "INC-1097",
+    "title": "Product search returns empty results after morning traffic increase",
+    "service": "search-api",
+    "severity": "SEV-3",
+    "symptoms": "Search requests succeed but return empty result sets for popular terms after morning traffic increase.",
+    "rootCause": "Search index shard was unavailable during rebalance.",
+    "resolution": "Restored shard allocation and paused rebalance during peak traffic."
+  },
+  {
+    "id": "INC-1109",
+    "title": "Service pods restarting after morning traffic increase",
+    "service": "platform-kubernetes",
+    "severity": "SEV-1",
+    "symptoms": "Multiple production pods restart and request error rate increases after morning traffic increase.",
+    "rootCause": "Node memory pressure triggered pod eviction.",
+    "resolution": "Drained unhealthy node, increased memory requests, and added node-pressure alerts."
+  }
+]
