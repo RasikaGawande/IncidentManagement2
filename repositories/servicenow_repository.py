@@ -1,10 +1,13 @@
 """ServiceNow Table API adapter for resolved incident history."""
 
+import logging
 from typing import Any
 
 import httpx
 
 from domain.models import Incident
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class ServiceNowIncidentRepository:
@@ -21,13 +24,21 @@ class ServiceNowIncidentRepository:
         self._limit = limit
 
     def load_historical_incidents(self) -> list[Incident]:
+        return self._load_incidents("active=false^ORDERBYDESCresolved_at")
+
+    def load_active_incidents(self) -> list[Incident]:
+        """Load open/in-progress incidents without adding them to historical search."""
+        return self._load_incidents("active=true^ORDERBYDESCopened_at")
+
+    def _load_incidents(self, query: str) -> list[Incident]:
+        logger.info("Requesting ServiceNow incidents with query=%s and limit=%d", query, self._limit)
         try:
             response = httpx.get(
                 f"{self._instance_url}/api/now/table/incident",
                 auth=self._auth,
                 headers={"Accept": "application/json"},
                 params={
-                    "sysparm_query": "active=false^ORDERBYDESCresolved_at",
+                    "sysparm_query": query,
                     "sysparm_limit": self._limit,
                     "sysparm_display_value": "true",
                     "sysparm_exclude_reference_link": "true",
@@ -38,8 +49,11 @@ class ServiceNowIncidentRepository:
             response.raise_for_status()
             records = response.json().get("result", [])
         except (httpx.HTTPError, ValueError) as error:
+            logger.warning("ServiceNow incident request failed: %s", error)
             raise RuntimeError(f"ServiceNow incident history could not be loaded: {error}") from error
-        return [self._to_incident(record) for record in records]
+        incidents = [self._to_incident(record) for record in records]
+        logger.info("ServiceNow returned %d incident records", len(incidents))
+        return incidents
 
     @staticmethod
     def _to_incident(record: dict[str, Any]) -> Incident:

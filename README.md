@@ -49,7 +49,7 @@ Configuration is through environment variables:
 - `SIMILARITY_THRESHOLD` (default `0.85`)
 - `DATA_DIRECTORY` (default `./data`)
 - `GITHUB_REPOSITORY` and `GITHUB_TOKEN` — optional. Set both to search your real `owner/repository` with GitHub's code-search API. Without them, the demo uses `data/simulated-github-code.json`.
-- `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` — optional, but must be set together. When set, resolved and closed incidents are loaded from the ServiceNow Table API instead of `data/historical-incidents.json`.
+- `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` — required and must be set together. Resolved and closed incidents are loaded from the ServiceNow Table API.
 - `SERVICENOW_INCIDENT_LIMIT` (default `200`) — maximum number of historical ServiceNow incidents to import.
 
 ## ServiceNow Personal Developer Instance
@@ -63,6 +63,8 @@ export SERVICENOW_PASSWORD="your-pdi-admin-password"
 ```
 
 The application imports only `active=false` incidents and requests a restricted set of fields. Do not commit these credentials or use company production incident data without approval.
+
+After startup, inspect the imported historical records at `GET /api/v1/incidents/historical` (for example, `http://127.0.0.1:8000/api/v1/incidents/historical`). Active ServiceNow tickets are fetched on demand from `GET /api/v1/incidents/active`; they are intentionally excluded from the historical similarity index.
 
 Open the API documentation at `http://127.0.0.1:8000/docs`. Send an incident to `POST /api/v1/incidents/analyze` using an `incident` object from `data/new-incident.json`.
 
