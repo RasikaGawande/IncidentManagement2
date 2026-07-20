@@ -10,6 +10,7 @@ from agents.code_investigation import CodeInvestigationAgent
 from core.config import Settings
 from domain.models import AnalyzeRequest, HealthResponse, IncidentAnalysis
 from repositories.json_repository import DeploymentHistoryRepository, JsonIncidentRepository
+from repositories.servicenow_repository import ServiceNowIncidentRepository
 from repositories.code_repository import GithubCodeRepository, JsonCodeRepository
 from services.advisor import IncidentAdvisor
 from services.incident_management import IncidentManagementService
@@ -19,7 +20,16 @@ from vector.in_memory_store import InMemoryIncidentVectorStore
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = Settings.from_environment()
-    repository = JsonIncidentRepository(settings.data_directory)
+    repository = (
+        ServiceNowIncidentRepository(
+            settings.servicenow_instance_url,
+            settings.servicenow_username,
+            settings.servicenow_password,
+            settings.servicenow_incident_limit,
+        )
+        if settings.servicenow_instance_url
+        else JsonIncidentRepository(settings.data_directory)
+    )
     incidents = repository.load_historical_incidents()
     azure_openai = AzureOpenAIClient(
         endpoint=settings.azure_openai_endpoint,

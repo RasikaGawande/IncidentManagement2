@@ -3,6 +3,7 @@ from domain.models import AgentFinding, Incident, SimilarIncident
 from agents.code_investigation import CodeInvestigationAgent, extract_error
 from core.config import PROJECT_ROOT
 from repositories.code_repository import JsonCodeRepository
+from repositories.servicenow_repository import ServiceNowIncidentRepository
 from services.incident_management import IncidentManagementService
 from services.azure_openai import AzureOpenAIClient
 from vector.in_memory_store import cosine_similarity
@@ -45,6 +46,24 @@ def test_code_agent_finds_simulated_source_for_log_error() -> None:
     )
     assert result.status == "CODE_EVIDENCE_FOUND"
     assert "transaction-validation-service" in result.evidence
+
+
+def test_servicenow_record_maps_to_historical_incident() -> None:
+    result = ServiceNowIncidentRepository._to_incident(
+        {
+            "number": "INC0010001",
+            "short_description": "Checkout requests return 502",
+            "description": "Users cannot complete checkout after release 2.14.0.",
+            "close_notes": "Rolled back the release.",
+            "close_code": "Software defect",
+            "priority": "2 - High",
+            "cmdb_ci": "checkout-api",
+        }
+    )
+    assert result.id == "INC0010001"
+    assert result.service == "checkout-api"
+    assert result.severity == "P2"
+    assert result.resolution == "Rolled back the release."
 
 async def test_azure_openai_client_parses_embedding_and_chat_responses() -> None:
     client = AzureOpenAIClient(
