@@ -21,6 +21,9 @@ class Incident(ApiModel):
     service: str
     severity: str
     symptoms: str
+    created_at: str | None = Field(default=None, alias="createdAt")
+    resolved_at: str | None = Field(default=None, alias="resolvedAt")
+    updated_at: str | None = Field(default=None, alias="updatedAt")
     root_cause: str | None = Field(default=None, alias="rootCause")
     resolution: str | None = None
     logs: str | None = None

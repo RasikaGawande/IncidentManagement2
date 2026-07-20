@@ -15,7 +15,7 @@ class ServiceNowIncidentRepository:
 
     _FIELDS = (
         "sys_id,number,short_description,description,close_notes,close_code,priority,"
-        "cmdb_ci,business_service,opened_at,resolved_at"
+        "cmdb_ci,business_service,sys_created_on,resolved_at,sys_updated_on"
     )
     _ATTACHMENT_FIELDS = "sys_id,table_sys_id,file_name,content_type,size_bytes"
     _MAX_TEXT_ATTACHMENT_BYTES = 100_000
@@ -29,8 +29,8 @@ class ServiceNowIncidentRepository:
         return self._load_incidents("active=false^ORDERBYDESCresolved_at")
 
     def load_active_incidents(self) -> list[Incident]:
-        """Load open/in-progress incidents without adding them to historical search."""
-        return self._load_incidents("active=true^ORDERBYDESCopened_at")
+        """Load only unresolved active incidents without adding them to historical search."""
+        return self._load_incidents("active=true^resolved_atISEMPTY^ORDERBYDESCsys_updated_on")
 
     def _load_incidents(self, query: str) -> list[Incident]:
         logger.info("Requesting ServiceNow incidents with query=%s and limit=%d", query, self._limit)
@@ -141,6 +141,9 @@ class ServiceNowIncidentRepository:
             service=service,
             severity=_severity(_display_value(record.get("priority"))),
             symptoms=description or title,
+            createdAt=_display_value(record.get("sys_created_on")) or None,
+            resolvedAt=_display_value(record.get("resolved_at")) or None,
+            updatedAt=_display_value(record.get("sys_updated_on")) or None,
             rootCause=_display_value(record.get("close_code")) or None,
             resolution=close_notes or None,
             attachments=attachments or [],

@@ -58,6 +58,9 @@ def test_servicenow_record_maps_to_historical_incident() -> None:
             "close_code": "Software defect",
             "priority": "2 - High",
             "cmdb_ci": "checkout-api",
+            "sys_created_on": "2026-07-20 09:00:00",
+            "resolved_at": "2026-07-20 10:00:00",
+            "sys_updated_on": "2026-07-20 10:30:00",
         }
     )
     assert result.id == "INC0010001"
@@ -65,6 +68,20 @@ def test_servicenow_record_maps_to_historical_incident() -> None:
     assert result.severity == "P2"
     assert result.resolution == "Rolled back the release."
     assert result.attachments == []
+    assert result.model_dump(by_alias=True) == {
+        "id": "INC0010001",
+        "title": "Checkout requests return 502",
+        "service": "checkout-api",
+        "severity": "P2",
+        "symptoms": "Users cannot complete checkout after release 2.14.0.",
+        "createdAt": "2026-07-20 09:00:00",
+        "resolvedAt": "2026-07-20 10:00:00",
+        "updatedAt": "2026-07-20 10:30:00",
+        "rootCause": "Software defect",
+        "resolution": "Rolled back the release.",
+        "logs": None,
+        "attachments": [],
+    }
 
 
 def test_servicenow_loads_file_content_only_for_txt_attachments(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -115,7 +115,12 @@ async def health(request: Request) -> HealthResponse:
     )
 
 
-@app.get("/api/v1/incidents/historical", response_model=list[Incident], tags=["incidents"])
+@app.get(
+    "/api/v1/incidents/historical",
+    response_model=list[Incident],
+    response_model_exclude={"updated_at"},
+    tags=["incidents"],
+)
 async def historical_incidents(request: Request) -> list[Incident]:
     """Fetch the current resolved and closed incidents from ServiceNow."""
     repository: ServiceNowIncidentRepository | None = request.app.state.servicenow_repository
@@ -132,7 +137,12 @@ async def historical_incidents(request: Request) -> list[Incident]:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-@app.get("/api/v1/incidents/active", response_model=list[Incident], tags=["incidents"])
+@app.get(
+    "/api/v1/incidents/active",
+    response_model=list[Incident],
+    response_model_exclude={"resolved_at"},
+    tags=["incidents"],
+)
 async def active_incidents(request: Request) -> list[Incident]:
     """Fetch the current active incidents from the configured ServiceNow instance."""
     repository: ServiceNowIncidentRepository | None = request.app.state.servicenow_repository

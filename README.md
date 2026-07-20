@@ -68,6 +68,8 @@ The application imports only `active=false` incidents and requests a restricted 
 
 Both incident endpoints include nested attachment metadata (`id`, `fileName`, `contentType`, and `sizeBytes`) fetched from ServiceNow's `sys_attachment` table. `.txt` attachments additionally include a bounded UTF-8 `fileContent` string; other attachment types return `fileContent: null`.
 
+Active incident responses include `createdAt` and `updatedAt`. Historical incident responses include `createdAt` and `resolvedAt`. Values are `null` when ServiceNow has not populated the corresponding date.
+
 On Cloud Run, the API opens its port even when an integration is not configured. Check `GET /health`: it returns `status: "error"` with the missing configuration detail; integration-dependent endpoints return `503` until the required settings are supplied. Historical analysis is built on the first analyze request.
 
 Open the API documentation at `http://127.0.0.1:8000/docs`. Send an incident to `POST /api/v1/incidents/analyze` using an `incident` object from `data/new-incident.json`.
