@@ -66,6 +66,8 @@ The application imports only `active=false` incidents and requests a restricted 
 
 After startup, inspect the imported historical records at `GET /api/v1/incidents/historical` (for example, `http://127.0.0.1:8000/api/v1/incidents/historical`). Active ServiceNow tickets are fetched on demand from `GET /api/v1/incidents/active`; they are intentionally excluded from the historical similarity index.
 
+On Cloud Run, the API opens its port immediately and imports ServiceNow history/builds Azure embeddings in the background. Check `GET /health`: it returns `status: "starting"` while loading, `status: "ok"` when historical analysis is ready, or `status: "error"` with a diagnostic message if initialization fails. The active-incidents endpoint remains available while history is loading.
+
 Open the API documentation at `http://127.0.0.1:8000/docs`. Send an incident to `POST /api/v1/incidents/analyze` using an `incident` object from `data/new-incident.json`.
 
 To run the tests:

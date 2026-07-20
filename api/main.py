@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 from typing import AsyncIterator
 
@@ -34,43 +35,83 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.servicenow_password,
         settings.servicenow_incident_limit,
     )
-    incidents = repository.load_historical_incidents()
-    logger.info("Loaded %d resolved/closed incidents from ServiceNow into the historical index", len(incidents))
     app.state.servicenow_repository = repository
-    azure_openai = AzureOpenAIClient(
-        endpoint=settings.azure_openai_endpoint,
-        api_key=settings.azure_openai_api_key,
-        api_version=settings.azure_openai_api_version,
-        embedding_deployment=settings.azure_openai_embedding_deployment,
-        chat_deployment=settings.azure_openai_chat_deployment,
+    app.state.incident_service = None
+    app.state.historical_incident_count = 0
+    app.state.initialization_status = "starting"
+    app.state.initialization_error = None
+    app.state.initialization_task = asyncio.create_task(
+        initialize_incident_service(app, settings, repository),
+        name="incident-management-initialization",
     )
-    vector_store = await InMemoryIncidentVectorStore.build(incidents, azure_openai)
-    code_repository = (
-        GithubCodeRepository(settings.github_repository, settings.github_token)
-        if settings.github_repository and settings.github_token
-        else JsonCodeRepository(settings.data_directory)
-    )
-    app.state.incident_service = IncidentManagementService(
-        vector_store=vector_store,
-        advisor=IncidentAdvisor(azure_openai),
-        deployment_agent=DeploymentCheckAgent(
-            DeploymentHistoryRepository(settings.data_directory)
-        ),
-        code_agent=CodeInvestigationAgent(code_repository),
-        similarity_threshold=settings.similarity_threshold,
-    )
-    app.state.historical_incident_count = vector_store.count
-    yield
+    logger.info("Application is listening while ServiceNow history loads in the background")
+    try:
+        yield
+    finally:
+        task: asyncio.Task[None] = app.state.initialization_task
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                logger.info("Background incident initialization was cancelled during shutdown")
+
+
+async def initialize_incident_service(
+    app: FastAPI, settings: Settings, repository: ServiceNowIncidentRepository
+) -> None:
+    """Load historical evidence without delaying the container's readiness port."""
+    try:
+        incidents = await asyncio.to_thread(repository.load_historical_incidents)
+        logger.info("Loaded %d resolved/closed incidents from ServiceNow into the historical index", len(incidents))
+        azure_openai = AzureOpenAIClient(
+            endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_api_version,
+            embedding_deployment=settings.azure_openai_embedding_deployment,
+            chat_deployment=settings.azure_openai_chat_deployment,
+        )
+        vector_store = await InMemoryIncidentVectorStore.build(incidents, azure_openai)
+        code_repository = (
+            GithubCodeRepository(settings.github_repository, settings.github_token)
+            if settings.github_repository and settings.github_token
+            else JsonCodeRepository(settings.data_directory)
+        )
+        app.state.incident_service = IncidentManagementService(
+            vector_store=vector_store,
+            advisor=IncidentAdvisor(azure_openai),
+            deployment_agent=DeploymentCheckAgent(
+                DeploymentHistoryRepository(settings.data_directory)
+            ),
+            code_agent=CodeInvestigationAgent(code_repository),
+            similarity_threshold=settings.similarity_threshold,
+        )
+        app.state.historical_incident_count = vector_store.count
+        app.state.initialization_status = "ok"
+        logger.info("Historical incident initialization completed")
+    except Exception as error:
+        app.state.initialization_status = "error"
+        app.state.initialization_error = str(error)
+        logger.exception("Historical incident initialization failed")
 
 app = FastAPI(title="Incident Management API", version="1.0.0", lifespan=lifespan)
 
 
 def service_from(request: Request) -> IncidentManagementService:
-    return request.app.state.incident_service
+    service: IncidentManagementService | None = request.app.state.incident_service
+    if service is None:
+        status = request.app.state.initialization_status
+        detail = request.app.state.initialization_error or "Historical incident data is still loading."
+        raise HTTPException(status_code=503, detail={"status": status, "message": detail})
+    return service
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health(request: Request) -> HealthResponse:
-    return HealthResponse(status="ok", historicalIncidentCount=request.app.state.historical_incident_count)
+    return HealthResponse(
+        status=request.app.state.initialization_status,
+        historicalIncidentCount=request.app.state.historical_incident_count,
+        detail=request.app.state.initialization_error,
+    )
 
 
 @app.get("/api/v1/incidents/historical", response_model=list[Incident], tags=["incidents"])

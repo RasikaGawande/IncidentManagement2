@@ -49,5 +49,6 @@ class AnalyzeRequest(ApiModel):
     limit: int = Field(default=3, ge=1, le=20)
 
 class HealthResponse(ApiModel):
-    status: Literal["ok"]
+    status: Literal["ok", "starting", "error"]
     historical_incident_count: int = Field(alias="historicalIncidentCount")
+    detail: str | None = None
