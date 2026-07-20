@@ -49,7 +49,7 @@ Configuration is through environment variables:
 - `SIMILARITY_THRESHOLD` (default `0.85`)
 - `DATA_DIRECTORY` (default `./data`)
 - `GITHUB_REPOSITORY` and `GITHUB_TOKEN` — optional. Set both to search your real `owner/repository` with GitHub's code-search API. Without them, the demo uses `data/simulated-github-code.json`.
-- `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` — required and must be set together. Resolved and closed incidents are loaded from the ServiceNow Table API.
+- `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` — required together to use the ServiceNow incident endpoints. Resolved and closed incidents are loaded from the ServiceNow Table API.
 - `SERVICENOW_INCIDENT_LIMIT` (default `200`) — maximum number of historical ServiceNow incidents to import.
 
 ## ServiceNow Personal Developer Instance
@@ -68,7 +68,7 @@ The application imports only `active=false` incidents and requests a restricted 
 
 Both incident endpoints include nested attachment metadata (`id`, `fileName`, `contentType`, and `sizeBytes`) fetched from ServiceNow's `sys_attachment` table. `.txt` attachments additionally include a bounded UTF-8 `fileContent` string; other attachment types return `fileContent: null`.
 
-On Cloud Run, the API opens its port immediately and imports ServiceNow history/builds Azure embeddings in the background. Check `GET /health`: it returns `status: "starting"` while loading, `status: "ok"` when historical analysis is ready, or `status: "error"` with a diagnostic message if initialization fails. The active-incidents endpoint remains available while history is loading.
+On Cloud Run, the API opens its port even when an integration is not configured. Check `GET /health`: it returns `status: "error"` with the missing configuration detail; integration-dependent endpoints return `503` until the required settings are supplied. Historical analysis is built on the first analyze request.
 
 Open the API documentation at `http://127.0.0.1:8000/docs`. Send an incident to `POST /api/v1/incidents/analyze` using an `incident` object from `data/new-incident.json`.
 

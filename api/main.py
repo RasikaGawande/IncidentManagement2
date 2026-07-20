@@ -23,26 +23,32 @@ logger = logging.getLogger("uvicorn.error")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings = Settings.from_environment()
-    if not settings.servicenow_instance_url:
-        raise RuntimeError(
-            "ServiceNow is required. Set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, "
-            "and SERVICENOW_PASSWORD."
-        )
-    repository = ServiceNowIncidentRepository(
-        settings.servicenow_instance_url,
-        settings.servicenow_username,
-        settings.servicenow_password,
-        settings.servicenow_incident_limit,
-    )
-    app.state.servicenow_repository = repository
     app.state.incident_service = None
     app.state.historical_incident_count = 0
-    app.state.initialization_status = "ok"
     app.state.initialization_error = None
     app.state.initialization_lock = asyncio.Lock()
-    app.state.settings = settings
-    logger.info("Application started; ServiceNow history will load only when requested")
+    app.state.settings = None
+    app.state.servicenow_repository = None
+    try:
+        settings = Settings.from_environment()
+        if not settings.servicenow_instance_url:
+            raise RuntimeError(
+                "ServiceNow is required. Set SERVICENOW_INSTANCE_URL, SERVICENOW_USERNAME, "
+                "and SERVICENOW_PASSWORD."
+            )
+        app.state.settings = settings
+        app.state.servicenow_repository = ServiceNowIncidentRepository(
+            settings.servicenow_instance_url,
+            settings.servicenow_username,
+            settings.servicenow_password,
+            settings.servicenow_incident_limit,
+        )
+        app.state.initialization_status = "ok"
+        logger.info("Application started; ServiceNow history will load only when requested")
+    except (RuntimeError, ValueError) as error:
+        app.state.initialization_status = "error"
+        app.state.initialization_error = str(error)
+        logger.error("Application started without incident integrations: %s", error)
     yield
 
 
@@ -55,8 +61,11 @@ async def load_incident_service(request: Request) -> IncidentManagementService:
         existing_service = request.app.state.incident_service
         if existing_service is not None:
             return existing_service
-        settings: Settings = request.app.state.settings
-        repository: ServiceNowIncidentRepository = request.app.state.servicenow_repository
+        settings: Settings | None = request.app.state.settings
+        repository: ServiceNowIncidentRepository | None = request.app.state.servicenow_repository
+        if settings is None or repository is None:
+            detail = request.app.state.initialization_error or "Incident integrations are not configured."
+            raise HTTPException(status_code=503, detail=detail)
         request.app.state.initialization_status = "starting"
         try:
             incidents = await asyncio.to_thread(repository.load_historical_incidents)
@@ -109,7 +118,10 @@ async def health(request: Request) -> HealthResponse:
 @app.get("/api/v1/incidents/historical", response_model=list[Incident], tags=["incidents"])
 async def historical_incidents(request: Request) -> list[Incident]:
     """Fetch the current resolved and closed incidents from ServiceNow."""
-    repository: ServiceNowIncidentRepository = request.app.state.servicenow_repository
+    repository: ServiceNowIncidentRepository | None = request.app.state.servicenow_repository
+    if repository is None:
+        detail = request.app.state.initialization_error or "ServiceNow is not configured."
+        raise HTTPException(status_code=503, detail=detail)
     logger.info("Historical incidents endpoint requested; fetching records from ServiceNow")
     try:
         incidents = await asyncio.to_thread(repository.load_historical_incidents)
@@ -123,7 +135,10 @@ async def historical_incidents(request: Request) -> list[Incident]:
 @app.get("/api/v1/incidents/active", response_model=list[Incident], tags=["incidents"])
 async def active_incidents(request: Request) -> list[Incident]:
     """Fetch the current active incidents from the configured ServiceNow instance."""
-    repository: ServiceNowIncidentRepository = request.app.state.servicenow_repository
+    repository: ServiceNowIncidentRepository | None = request.app.state.servicenow_repository
+    if repository is None:
+        detail = request.app.state.initialization_error or "ServiceNow is not configured."
+        raise HTTPException(status_code=503, detail=detail)
     logger.info("Active incidents endpoint requested; fetching current records from ServiceNow")
     try:
         incidents = await asyncio.to_thread(repository.load_active_incidents)
