@@ -52,3 +52,6 @@ class IncidentManagementService:
             f"{finding.agent_name} [{finding.status}]: {finding.summary}" for finding in findings
         ) or "No additional agent evidence"
         return f"Historical evidence: {historical}. Agent evidence: {agent_evidence}."
+    def historical_incidents(self) -> list[Incident]:
+        """Return the current historical data source without embedding metadata."""
+        return self._vector_store.incidents

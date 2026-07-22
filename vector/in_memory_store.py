@@ -25,6 +25,11 @@ class InMemoryIncidentVectorStore:
     def count(self) -> int:
         return len(self._entries)
 
+    @property
+    def incidents(self) -> list[Incident]:
+        """Return the historical incidents loaded into this index."""
+        return [entry.incident for entry in self._entries]
+
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if len(left) != len(right):
         raise ValueError("Embedding dimensions do not match.")
