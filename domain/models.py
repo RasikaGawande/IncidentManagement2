@@ -39,6 +39,7 @@ class AgentFinding(ApiModel):
     evidence: str
 
 class IncidentAnalysis(ApiModel):
+    analysis_id: str | None = Field(default=None, alias="analysisId")
     incoming_incident: Incident = Field(alias="incomingIncident")
     similar_incidents: list[SimilarIncident] = Field(alias="similarIncidents")
     agent_findings: list[AgentFinding] = Field(alias="agentFindings")
@@ -47,6 +48,17 @@ class IncidentAnalysis(ApiModel):
 class AnalyzeRequest(ApiModel):
     incident: Incident
     limit: int = Field(default=3, ge=1, le=20)
+
+
+class AnalysisChatRequest(ApiModel):
+    message: str = Field(min_length=1, max_length=8000)
+
+
+class AnalysisChatResponse(ApiModel):
+    answer: str
+    sources: list[str] = Field(default_factory=list)
+    new_findings: list[AgentFinding] = Field(default_factory=list, alias="newFindings")
+    agent_calls: list[str] = Field(default_factory=list, alias="agentCalls")
 
 class HealthResponse(ApiModel):
     status: Literal["ok"]

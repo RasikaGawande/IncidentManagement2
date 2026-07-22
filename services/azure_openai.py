@@ -46,6 +46,21 @@ class AzureOpenAIClient:
             raise RuntimeError("Azure OpenAI returned an empty recommendation.")
         return recommendation.strip()
 
+    async def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> dict:
+        """Return the raw assistant message so the backend can validate tool calls."""
+        response = await self._request(
+            f"/openai/deployments/{self._chat_deployment}/chat/completions",
+            # GPT-5 deployments may reject non-default sampling parameters.
+            # Omit temperature and let the deployment apply its supported default.
+            {"messages": messages, "tools": tools, "tool_choice": "auto"},
+            timeout=120,
+        )
+        choices = response.get("choices")
+        message = choices[0].get("message") if choices else None
+        if not isinstance(message, dict):
+            raise RuntimeError("Azure OpenAI returned an invalid chat response.")
+        return {"message": message}
+
     async def _request(self, path: str, payload: dict, timeout: float) -> dict:
         try:
             async with httpx.AsyncClient(base_url=self._endpoint, timeout=timeout) as client:
@@ -57,5 +72,11 @@ class AzureOpenAIClient:
                 )
                 response.raise_for_status()
                 return response.json()
+        except httpx.HTTPStatusError as error:
+            # Azure's response body contains the actionable validation message
+            # (for example, an unsupported parameter or API-version mismatch).
+            raise RuntimeError(
+                f"Azure OpenAI request failed ({error.response.status_code}): {error.response.text}"
+            ) from error
         except (httpx.HTTPError, ValueError) as error:
             raise RuntimeError(f"Azure OpenAI request failed: {error}") from error

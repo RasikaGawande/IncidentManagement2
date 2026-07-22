@@ -10,6 +10,15 @@ A FastAPI application that retrieves resolved historical incidents from Azure AI
 4. The Deployment Check Agent always adds the latest relevant deployment; the Code Investigation Agent runs whenever logs are present.
 5. The chat model receives only the new incident, retrieved history, and those findings, then produces an evidence-bounded RCA hypothesis and safe next steps.
 
+## Temporary follow-up chat
+
+`POST /api/v1/incidents/analyze` now returns an `analysisId`. It creates an in-memory session containing the incoming incident, retrieved historical incidents, agent findings, recommendation, and the latest chat messages. It is not written to Cosmos DB or any other database, expires after 30 minutes of inactivity, and disappears on application restart.
+
+- `POST /api/v1/analysis-sessions/{analysisId}/chat` with `{"message": "What code changes and tests are required?"}` asks a follow-up question.
+- `DELETE /api/v1/analysis-sessions/{analysisId}` removes the context immediately. Expired or deleted IDs return HTTP 404.
+
+The model receives a secure, read-only tool registry. It can answer from session evidence or request an allowed tool based on the meaning of the question: `search_historical_incidents`, `get_deployment_evidence`, `get_code_evidence`, `inspect_code_change_impact`, or `run_deep_rca_evidence`. The last tool reuses the existing log-routed RCA graph, which invokes its configured GitHub MCP and read-only SQLite database agents only when logs justify them. The FastAPI backend validates the requested name against this registry, executes it, supplies its result back to the model, and limits one turn to three tool rounds. The model never directly accesses production, deploys, modifies source, changes balances, or sends messages.
+
 Never add the new/open incident to the historical container before analysis. Add it only after resolution, then run the indexer so it can become evidence for future incidents.
 
 ## Project layout

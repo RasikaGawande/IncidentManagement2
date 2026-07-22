@@ -1,0 +1,227 @@
+"""Temporary, in-process incident-analysis chat sessions and safe tool execution."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any, Awaitable, Callable
+from uuid import uuid4
+
+from agents.deployment_check import DeploymentCheckAgent
+from domain.models import AgentFinding, AnalysisChatResponse, Incident, IncidentAnalysis, SimilarIncident
+from repositories.code_repository import CodeRepository
+from services.azure_openai import AzureOpenAIClient
+from vector.store import IncidentStore
+
+
+@dataclass(slots=True)
+class AnalysisSession:
+    incident: Incident
+    historical_incidents: list[SimilarIncident]
+    agent_findings: list[AgentFinding]
+    initial_recommendation: str
+    recent_messages: list[dict[str, Any]] = field(default_factory=list)
+    expires_at: datetime = field(default_factory=lambda: datetime.now(UTC) + timedelta(minutes=30))
+
+
+class AnalysisSessionStore:
+    """A TTL store intentionally scoped to one running API process."""
+
+    def __init__(self, ttl: timedelta = timedelta(minutes=30)) -> None:
+        self._ttl = ttl
+        self._sessions: dict[str, AnalysisSession] = {}
+        self._lock = asyncio.Lock()
+
+    async def create(self, analysis: IncidentAnalysis) -> str:
+        session_id = f"analysis-{uuid4()}"
+        async with self._lock:
+            self._purge_expired()
+            self._sessions[session_id] = AnalysisSession(
+                incident=analysis.incoming_incident,
+                historical_incidents=list(analysis.similar_incidents),
+                agent_findings=list(analysis.agent_findings),
+                initial_recommendation=analysis.recommendation,
+                expires_at=datetime.now(UTC) + self._ttl,
+            )
+        return session_id
+
+    async def get(self, session_id: str) -> AnalysisSession | None:
+        async with self._lock:
+            self._purge_expired()
+            return self._sessions.get(session_id)
+
+    async def delete(self, session_id: str) -> bool:
+        async with self._lock:
+            return self._sessions.pop(session_id, None) is not None
+
+    async def touch(self, session: AnalysisSession) -> None:
+        """Extend the inactivity timeout after a successful chat request."""
+        async with self._lock:
+            session.expires_at = datetime.now(UTC) + self._ttl
+
+    def _purge_expired(self) -> None:
+        now = datetime.now(UTC)
+        for session_id in [key for key, value in self._sessions.items() if value.expires_at <= now]:
+            del self._sessions[session_id]
+
+
+ToolHandler = Callable[[AnalysisSession, dict[str, Any]], Awaitable[tuple[AgentFinding, list[str]]]]
+
+
+class IncidentToolRegistry:
+    """The complete allow-list of evidence tools the model may request."""
+
+    def __init__(
+        self,
+        vector_store: IncidentStore,
+        deployment_agent: DeploymentCheckAgent,
+        code_repository: CodeRepository,
+    ) -> None:
+        self._vector_store = vector_store
+        self._deployment_agent = deployment_agent
+        self._code_repository = code_repository
+        self._handlers: dict[str, ToolHandler] = {
+            "search_historical_incidents": self._search_historical_incidents,
+            "get_deployment_evidence": self._get_deployment_evidence,
+            "get_code_evidence": self._get_code_evidence,
+            "inspect_code_change_impact": self._inspect_code_change_impact,
+            "run_deep_rca_evidence": self._run_deep_rca_evidence,
+        }
+
+    def definitions(self) -> list[dict[str, Any]]:
+        return [
+            self._definition("search_historical_incidents", "Find similar resolved incidents, root causes, and prior resolutions when historical evidence is missing.", {"investigation_focus": {"type": "string", "description": "The aspect of the active incident to search for."}}),
+            self._definition("get_deployment_evidence", "Retrieve approved read-only release, version, and change evidence for the active incident service. Use for timing or release-causality questions.", {}),
+            self._definition("get_code_evidence", "Retrieve approved source-code excerpts related to the active incident. Use only when source evidence is needed.", {"focus": {"type": "string", "description": "Failure, method, component, or question to investigate."}}),
+            self._definition("inspect_code_change_impact", "Identify affected files, likely change locations, callers/contracts, and tests from approved code excerpts. Use for requested code changes, prevention, or tests.", {"focus": {"type": "string", "description": "Requested impact, remediation, or test focus."}}),
+            self._definition("run_deep_rca_evidence", "Run the existing read-only RCA workflow against supplied incident logs when deeper GitHub MCP or SQLite database evidence is needed. The workflow itself decides whether its configured GitHub and database evidence agents are relevant. Never use it when there are no logs.", {"focus": {"type": "string", "description": "The missing diagnostic evidence to clarify."}}),
+        ]
+
+    async def execute(self, name: str, session: AnalysisSession, arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        handler = self._handlers.get(name)
+        if not handler:
+            raise ValueError(f"Tool '{name}' is not in the approved registry.")
+        return await handler(session, arguments)
+
+    @staticmethod
+    def _definition(name: str, description: str, properties: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": [], "additionalProperties": False}}}
+
+    async def _search_historical_incidents(self, session: AnalysisSession, arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        focus = str(arguments.get("investigation_focus", "")).strip()
+        query = session.incident.model_copy(update={"symptoms": f"{session.incident.symptoms} {focus}".strip()})
+        matches = await self._vector_store.search(query, 5)
+        session.historical_incidents = self._merge_matches(session.historical_incidents, matches)
+        evidence = "\n".join(f"{item.incident.id}: rootCause={item.incident.root_cause}; resolution={item.incident.resolution}" for item in matches) or "No additional resolved incidents found."
+        return AgentFinding(agentName="AzureAISearchAgent", status="HISTORICAL_EVIDENCE_FOUND" if matches else "NO_HISTORICAL_EVIDENCE_FOUND", summary=f"Historical search completed for: {focus or 'active incident'}.", evidence=evidence), [item.incident.id for item in matches]
+
+    async def _get_deployment_evidence(self, session: AnalysisSession, _arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        finding = self._deployment_agent.investigate(session.incident)
+        return finding, _source_ids(finding.evidence)
+
+    async def _get_code_evidence(self, session: AnalysisSession, arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        focus = str(arguments.get("focus", "")).strip()
+        results = self._code_repository.search(self._code_query(session, focus))
+        evidence = "\n".join(f"{result.path}: {result.excerpt}" for result in results) or "No approved code excerpts matched the active incident."
+        return AgentFinding(agentName="CodeEvidenceAgent", status="CODE_EVIDENCE_FOUND" if results else "NO_CODE_EVIDENCE_FOUND", summary=f"Code evidence search completed for: {focus or 'active failure'}.", evidence=evidence), [result.path for result in results]
+
+    async def _inspect_code_change_impact(self, session: AnalysisSession, arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        focus = str(arguments.get("focus", "code changes and tests")).strip()
+        results = self._code_repository.search(self._code_query(session, focus), limit=5)
+        if not results:
+            return AgentFinding(agentName="CodeChangeImpactAgent", status="NO_CODE_IMPACT_FOUND", summary="No approved code excerpts were found for impact analysis.", evidence="Do not infer a specific source change without approved code evidence."), []
+        paths = ", ".join(result.path for result in results)
+        excerpts = "\n".join(f"{result.path}: {result.excerpt}" for result in results)
+        return AgentFinding(agentName="CodeChangeImpactAgent", status="CODE_IMPACT_FOUND", summary=f"Potentially affected approved files: {paths}. Review these excerpts for the requested change and add regression tests around the failing input and boundary conditions.", evidence=excerpts), [result.path for result in results]
+
+    async def _run_deep_rca_evidence(self, session: AnalysisSession, arguments: dict[str, Any]) -> tuple[AgentFinding, list[str]]:
+        """Reuse the existing log router, GitHub MCP, and read-only SQLite agents."""
+        if not session.incident.logs:
+            return AgentFinding(agentName="RcaGraphAgent", status="NO_LOGS_SUPPLIED", summary="Deep RCA evidence requires incident logs.", evidence="Provide application ERROR logs or a stack trace."), []
+        try:
+            # This module owns optional MCP/SQL dependencies, so import it only
+            # when the model has requested this approved deep-investigation tool.
+            from agents.rca_graph import run_rca
+            result = await run_rca(session.incident.logs)
+        except Exception as error:
+            return AgentFinding(agentName="RcaGraphAgent", status="RCA_EVIDENCE_UNAVAILABLE", summary="The deep RCA workflow could not collect additional evidence.", evidence=str(error)), []
+        github = result.get("github_evidence_round_2") or result.get("github_evidence_round_1") or []
+        database = result.get("database_evidence_round_2") or result.get("database_evidence_round_1") or []
+        evidence = json.dumps({"focus": str(arguments.get("focus", "")), "githubMcpEvidence": github, "databaseEvidence": database, "summary": result.get("summary", "")}, default=str)[:16000]
+        sources = (["GitHub MCP"] if github else []) + (["SQLite read-only RCA"] if database else [])
+        return AgentFinding(agentName="RcaGraphAgent", status="RCA_EVIDENCE_COMPLETED", summary="The existing RCA workflow completed; its log router selected only the relevant configured evidence agents.", evidence=evidence), sources
+
+    @staticmethod
+    def _code_query(session: AnalysisSession, focus: str) -> str:
+        return " ".join(value for value in (session.incident.service, session.incident.title, session.incident.symptoms, session.incident.logs or "", focus) if value)[:4000]
+
+    @staticmethod
+    def _merge_matches(existing: list[SimilarIncident], additional: list[SimilarIncident]) -> list[SimilarIncident]:
+        by_id = {match.incident.id: match for match in existing}
+        by_id.update({match.incident.id: match for match in additional})
+        return list(by_id.values())
+
+
+class AnalysisChatService:
+    def __init__(self, sessions: AnalysisSessionStore, registry: IncidentToolRegistry, client: AzureOpenAIClient) -> None:
+        self._sessions = sessions
+        self._registry = registry
+        self._client = client
+
+    async def chat(self, analysis_id: str, message: str) -> AnalysisChatResponse | None:
+        session = await self._sessions.get(analysis_id)
+        if session is None:
+            return None
+        messages = [self._system_message(session), *session.recent_messages, {"role": "user", "content": message}]
+        calls: list[str] = []
+        new_findings: list[AgentFinding] = []
+        sources = self._session_sources(session)
+        for _ in range(3):
+            response = await self._client.chat_with_tools(messages, self._registry.definitions())
+            assistant_message = response["message"]
+            messages.append(assistant_message)
+            tool_calls = assistant_message.get("tool_calls") or []
+            if not tool_calls:
+                answer = str(assistant_message.get("content") or "Evidence is insufficient to answer that safely.").strip()
+                session.recent_messages = (messages[1:])[-12:]
+                await self._sessions.touch(session)
+                return AnalysisChatResponse(answer=answer, sources=list(dict.fromkeys(sources)), newFindings=new_findings, agentCalls=calls)
+            for call in tool_calls:
+                name = call.get("function", {}).get("name", "")
+                try:
+                    arguments = json.loads(call.get("function", {}).get("arguments") or "{}")
+                    if not isinstance(arguments, dict):
+                        raise ValueError("Tool arguments must be an object.")
+                    finding, finding_sources = await self._registry.execute(name, session, arguments)
+                    calls.append(name)
+                    new_findings.append(finding)
+                    session.agent_findings.append(finding)
+                    sources.extend(finding_sources)
+                    content = finding.model_dump_json(by_alias=True)
+                except (ValueError, json.JSONDecodeError, RuntimeError) as error:
+                    content = json.dumps({"error": str(error)})
+                messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": content})
+        session.recent_messages = (messages[1:])[-12:]
+        await self._sessions.touch(session)
+        return AnalysisChatResponse(answer="I gathered the available approved evidence but could not complete a safe answer. Please refine the question.", sources=list(dict.fromkeys(sources)), newFindings=new_findings, agentCalls=calls)
+
+    @staticmethod
+    def _system_message(session: AnalysisSession) -> dict[str, str]:
+        history = "\n".join(f"- {item.incident.id}: rootCause={item.incident.root_cause}; resolution={item.incident.resolution}" for item in session.historical_incidents) or "None"
+        findings = "\n".join(f"- {item.agent_name}: {item.summary} Evidence: {item.evidence}" for item in session.agent_findings) or "None"
+        evidence = f"Incoming incident: {session.incident.searchable_text()}\nInitial recommendation: {session.initial_recommendation}\nHistorical evidence:\n{history}\nAgent findings:\n{findings}"
+        return {"role": "system", "content": "You are Prod+ Incident Advisor. Use only evidence in this message. Answer directly when it is enough; otherwise request only an approved tool needed to obtain missing evidence. Never claim access to production, execute changes, deploy, rollback, modify source, change balances, or contact counterparties. Clearly distinguish evidence from hypotheses and cite evidence source IDs/paths in your answer.\n\nCURRENT SESSION EVIDENCE:\n" + evidence}
+
+    @staticmethod
+    def _session_sources(session: AnalysisSession) -> list[str]:
+        sources = [item.incident.id for item in session.historical_incidents]
+        for finding in session.agent_findings:
+            sources.extend(_source_ids(finding.evidence))
+        return sources
+
+
+def _source_ids(evidence: str) -> list[str]:
+    return re.findall(r"(?:INC|DEP)-[A-Za-z0-9-]+", evidence)

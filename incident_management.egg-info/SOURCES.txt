@@ -20,6 +20,7 @@ repositories/code_repository.py
 repositories/json_repository.py
 services/__init__.py
 services/advisor.py
+services/analysis_sessions.py
 services/azure_openai.py
 services/incident_management.py
 tests/test_incident_management.py

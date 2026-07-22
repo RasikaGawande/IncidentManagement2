@@ -1,11 +1,12 @@
 import pytest
-from domain.models import AgentFinding, Incident, SimilarIncident
+from domain.models import AgentFinding, Incident, IncidentAnalysis, SimilarIncident
 from agents.code_investigation import extract_error
 from core.config import PROJECT_ROOT
 from services.incident_management import IncidentManagementService
 from services.azure_openai import AzureOpenAIClient
 from vector.in_memory_store import cosine_similarity
 from vector.azure_ai_search_store import AzureAISearchIncidentStore
+from services.analysis_sessions import AnalysisChatService, AnalysisSessionStore, IncidentToolRegistry
 
 def incident(service: str = "checkout-api") -> Incident:
     return Incident(id="INC-1", title="Timeout", service=service, severity="SEV-1", symptoms="Requests time out")
@@ -80,3 +81,50 @@ async def test_azure_ai_search_store_uses_hybrid_text_vector_query() -> None:
     assert matches[0].incident.id == "INC-OLD-1"
     assert matches[0].similarity == pytest.approx(0.021)
     assert store.count == 1
+
+
+async def test_analysis_session_is_temporary_and_removed_on_delete() -> None:
+    store = AnalysisSessionStore()
+    analysis = IncidentAnalysis(
+        incomingIncident=incident(), similarIncidents=[], agentFindings=[], recommendation="Check evidence."
+    )
+    session_id = await store.create(analysis)
+    assert (await store.get(session_id)) is not None
+    assert await store.delete(session_id) is True
+    assert await store.get(session_id) is None
+
+
+async def test_chat_executes_only_registered_tool_and_returns_its_source() -> None:
+    class Store:
+        async def search(self, _incident: Incident, _limit: int) -> list[SimilarIncident]:
+            return [SimilarIncident(incident=Incident(id="INC-OLD-1", title="Old", service="checkout-api", severity="SEV-2", symptoms="timeout"), similarity=0.9)]
+
+    class DeploymentAgent:
+        def investigate(self, _incident: Incident) -> AgentFinding:
+            return AgentFinding(agentName="DeploymentCheckAgent", status="DEPLOYMENT_FOUND", summary="Found", evidence="deploymentId=DEP-1")
+
+    class CodeRepository:
+        def search(self, _query: str, limit: int = 3):
+            return []
+
+    class Client:
+        def __init__(self) -> None:
+            self.call_count = 0
+        async def chat_with_tools(self, _messages, tools):
+            self.call_count += 1
+            assert {tool["function"]["name"] for tool in tools} == {
+                "search_historical_incidents", "get_deployment_evidence", "get_code_evidence", "inspect_code_change_impact", "run_deep_rca_evidence"
+            }
+            if self.call_count == 1:
+                return {"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "call-1", "function": {"name": "search_historical_incidents", "arguments": '{"investigation_focus":"prior resolutions"}'}}]}}
+            return {"message": {"role": "assistant", "content": "A prior incident exists.", "tool_calls": []}}
+
+    sessions = AnalysisSessionStore()
+    analysis = IncidentAnalysis(incomingIncident=incident(), similarIncidents=[], agentFindings=[], recommendation="Initial")
+    session_id = await sessions.create(analysis)
+    chat = AnalysisChatService(sessions, IncidentToolRegistry(Store(), DeploymentAgent(), CodeRepository()), Client())
+    response = await chat.chat(session_id, "Have we seen this before?")
+    assert response is not None
+    assert response.answer == "A prior incident exists."
+    assert response.agent_calls == ["search_historical_incidents"]
+    assert response.sources == ["INC-OLD-1"]
