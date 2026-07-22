@@ -2,6 +2,7 @@ import pytest
 from domain.models import AgentFinding, Incident, IncidentAnalysis, SimilarIncident
 from agents.code_investigation import extract_error
 from core.config import PROJECT_ROOT
+from repositories.servicenow_repository import ServiceNowIncidentRepository
 from services.incident_management import IncidentManagementService
 from services.azure_openai import AzureOpenAIClient
 from vector.in_memory_store import cosine_similarity
@@ -36,6 +37,214 @@ async def test_low_similarity_runs_deployment_agent() -> None:
 def test_error_extraction_prefers_exception_from_logs() -> None:
     logs = "INFO export started\nERROR TimestampFormatError: completed_at is a string\nAttributeError: 'str' object has no attribute 'strftime'"
     assert extract_error(logs) == "AttributeError: 'str' object has no attribute 'strftime'"
+
+
+
+def test_servicenow_record_maps_to_historical_incident() -> None:
+    result = ServiceNowIncidentRepository._to_incident(
+        {
+            "number": "INC0010001",
+            "short_description": "Checkout requests return 502",
+            "description": "Users cannot complete checkout after release 2.14.0.",
+            "close_notes": "Rolled back the release.",
+            "close_code": "Software defect",
+            "priority": "2 - High",
+            "cmdb_ci": "checkout-api",
+            "sys_created_on": "2026-07-20 09:00:00",
+            "resolved_at": "2026-07-20 10:00:00",
+            "sys_updated_on": "2026-07-20 10:30:00",
+        }
+    )
+    assert result.id == "INC0010001"
+    assert result.service == "checkout-api"
+    assert result.severity == "P2"
+    assert result.resolution == "Rolled back the release."
+    assert result.attachments == []
+    assert result.model_dump(by_alias=True) == {
+        "id": "INC0010001",
+        "title": "Checkout requests return 502",
+        "service": "checkout-api",
+        "severity": "P2",
+        "symptoms": "Users cannot complete checkout after release 2.14.0.",
+        "createdAt": "2026-07-20 09:00:00",
+        "resolvedAt": "2026-07-20 10:00:00",
+        "updatedAt": "2026-07-20 10:30:00",
+        "rootCause": "Software defect",
+        "resolution": "Rolled back the release.",
+        "logs": None,
+        "attachments": [],
+    }
+
+
+def test_servicenow_loads_file_content_only_for_txt_attachments(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        def __init__(self, payload: dict | None = None, content: bytes = b"") -> None:
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return self._payload
+
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        calls.append(url)
+        if url.endswith("/sys_attachment"):
+            return Response(
+                {
+                    "result": [
+                        {
+                            "sys_id": "text-file-id",
+                            "table_sys_id": "incident-id",
+                            "file_name": "diagnostics.TXT",
+                            "content_type": "text/plain",
+                            "size_bytes": "18",
+                        },
+                        {
+                            "sys_id": "pdf-file-id",
+                            "table_sys_id": "incident-id",
+                            "file_name": "report.pdf",
+                            "content_type": "application/pdf",
+                            "size_bytes": "42",
+                        },
+                    ]
+                }
+            )
+        assert url.endswith("/attachment/text-file-id/file")
+        return Response(content=b"Connection timed out")
+
+    monkeypatch.setattr("repositories.servicenow_repository.httpx.get", fake_get)
+    repository = ServiceNowIncidentRepository("https://instance.example", "user", "password")
+
+    attachments = repository._load_attachments(["incident-id"])["incident-id"]
+
+    assert [attachment.model_dump(by_alias=True) for attachment in attachments] == [
+        {
+            "id": "text-file-id",
+            "fileName": "diagnostics.TXT",
+            "contentType": "text/plain",
+            "sizeBytes": 18,
+            "fileContent": "Connection timed out",
+        },
+        {
+            "id": "pdf-file-id",
+            "fileName": "report.pdf",
+            "contentType": "application/pdf",
+            "sizeBytes": 42,
+            "fileContent": None,
+        },
+    ]
+    assert calls == [
+        "https://instance.example/api/now/table/sys_attachment",
+        "https://instance.example/api/now/attachment/text-file-id/file",
+    ]
+
+
+
+def test_servicenow_record_maps_to_historical_incident() -> None:
+    result = ServiceNowIncidentRepository._to_incident(
+        {
+            "number": "INC0010001",
+            "short_description": "Checkout requests return 502",
+            "description": "Users cannot complete checkout after release 2.14.0.",
+            "close_notes": "Rolled back the release.",
+            "close_code": "Software defect",
+            "priority": "2 - High",
+            "cmdb_ci": "checkout-api",
+            "sys_created_on": "2026-07-20 09:00:00",
+            "resolved_at": "2026-07-20 10:00:00",
+            "sys_updated_on": "2026-07-20 10:30:00",
+        }
+    )
+    assert result.id == "INC0010001"
+    assert result.service == "checkout-api"
+    assert result.severity == "P2"
+    assert result.resolution == "Rolled back the release."
+    assert result.attachments == []
+    assert result.model_dump(by_alias=True) == {
+        "id": "INC0010001",
+        "title": "Checkout requests return 502",
+        "service": "checkout-api",
+        "severity": "P2",
+        "symptoms": "Users cannot complete checkout after release 2.14.0.",
+        "createdAt": "2026-07-20 09:00:00",
+        "resolvedAt": "2026-07-20 10:00:00",
+        "updatedAt": "2026-07-20 10:30:00",
+        "rootCause": "Software defect",
+        "resolution": "Rolled back the release.",
+        "logs": None,
+        "attachments": [],
+    }
+
+
+def test_servicenow_loads_file_content_only_for_txt_attachments(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        def __init__(self, payload: dict | None = None, content: bytes = b"") -> None:
+            self._payload = payload or {}
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return self._payload
+
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kwargs: object) -> Response:
+        calls.append(url)
+        if url.endswith("/sys_attachment"):
+            return Response(
+                {
+                    "result": [
+                        {
+                            "sys_id": "text-file-id",
+                            "table_sys_id": "incident-id",
+                            "file_name": "diagnostics.TXT",
+                            "content_type": "text/plain",
+                            "size_bytes": "18",
+                        },
+                        {
+                            "sys_id": "pdf-file-id",
+                            "table_sys_id": "incident-id",
+                            "file_name": "report.pdf",
+                            "content_type": "application/pdf",
+                            "size_bytes": "42",
+                        },
+                    ]
+                }
+            )
+        assert url.endswith("/attachment/text-file-id/file")
+        return Response(content=b"Connection timed out")
+
+    monkeypatch.setattr("repositories.servicenow_repository.httpx.get", fake_get)
+    repository = ServiceNowIncidentRepository("https://instance.example", "user", "password")
+
+    attachments = repository._load_attachments(["incident-id"])["incident-id"]
+
+    assert [attachment.model_dump(by_alias=True) for attachment in attachments] == [
+        {
+            "id": "text-file-id",
+            "fileName": "diagnostics.TXT",
+            "contentType": "text/plain",
+            "sizeBytes": 18,
+            "fileContent": "Connection timed out",
+        },
+        {
+            "id": "pdf-file-id",
+            "fileName": "report.pdf",
+            "contentType": "application/pdf",
+            "sizeBytes": 42,
+            "fileContent": None,
+        },
+    ]
+    assert calls == [
+        "https://instance.example/api/now/table/sys_attachment",
+        "https://instance.example/api/now/attachment/text-file-id/file",
+    ]
 
 
 async def test_azure_openai_client_parses_embedding_and_chat_responses() -> None:

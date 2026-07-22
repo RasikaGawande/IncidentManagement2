@@ -33,3 +33,7 @@ class IncidentManagementService:
             agentFindings=findings,
             recommendation=recommendation,
         )
+
+    def historical_incidents(self) -> list[Incident]:
+        """Return the current historical data source without embedding metadata."""
+        return self._vector_store.incidents

@@ -79,6 +79,30 @@ Configuration is through environment variables:
 - `AZURE_SEARCH_API_VERSION` (default `2025-09-01`)
 - `DATA_DIRECTORY` (default `./data`)
 - `GITHUB_REPOSITORY` and `GITHUB_TOKEN` — optional. Set both to search your real `owner/repository` with GitHub's code-search API. Without them, the demo uses `data/simulated-github-code.json`.
+- `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` — required together to use the ServiceNow incident endpoints. Resolved and closed incidents are loaded from the ServiceNow Table API.
+- `SERVICENOW_INCIDENT_LIMIT` (default `200`) — maximum number of historical ServiceNow incidents to import.
+
+## ServiceNow Personal Developer Instance
+
+Create dummy incidents in your PDI, resolve a few of them, and configure the three ServiceNow variables locally:
+
+```bash
+export SERVICENOW_INSTANCE_URL="https://your-instance.service-now.com"
+export SERVICENOW_USERNAME="admin"
+export SERVICENOW_PASSWORD="your-pdi-admin-password"
+```
+
+The application imports only `active=false` incidents and requests a restricted set of fields. Do not commit these credentials or use company production incident data without approval.
+
+`GET /api/v1/incidents/historical` fetches resolved/closed records from ServiceNow on demand (for example, `http://127.0.0.1:8000/api/v1/incidents/historical`). `GET /api/v1/incidents/active` likewise fetches active tickets on demand; active tickets are intentionally excluded from the historical similarity index.
+
+Both incident endpoints include nested attachment metadata (`id`, `fileName`, `contentType`, and `sizeBytes`) fetched from ServiceNow's `sys_attachment` table. `.txt` attachments additionally include a bounded UTF-8 `fileContent` string; other attachment types return `fileContent: null`.
+
+Active incident responses include `createdAt` and `updatedAt`. Historical incident responses include `createdAt` and `resolvedAt`. Values are `null` when ServiceNow has not populated the corresponding date.
+
+The API permits cross-origin browser requests from frontend applications. It does not allow browser credentials; configure a specific origin before adding cookie- or browser-session-based authentication.
+
+On Cloud Run, the API opens its port even when an integration is not configured. Check `GET /health`: it returns `status: "error"` with the missing configuration detail; integration-dependent endpoints return `503` until the required settings are supplied. Historical analysis is built on the first analyze request.
 
 Open the API documentation at `http://127.0.0.1:8000/docs`. Send an incident to `POST /api/v1/incidents/analyze` using an `incident` object from `data/new-incident.json`.
 
