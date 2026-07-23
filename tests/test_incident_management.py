@@ -3,6 +3,7 @@ from domain.models import AgentFinding, Incident, SimilarIncident
 from agents.code_investigation import CodeInvestigationAgent, extract_error
 from core.config import PROJECT_ROOT
 from repositories.code_repository import JsonCodeRepository
+from repositories.json_repository import ServiceNowFallbackRepository
 from repositories.servicenow_repository import ServiceNowIncidentRepository
 from services.incident_management import IncidentManagementService
 from services.azure_openai import AzureOpenAIClient
@@ -13,6 +14,19 @@ def incident(service: str = "checkout-api") -> Incident:
 
 def test_cosine_similarity_returns_one_for_identical_vectors() -> None:
     assert cosine_similarity([1.0, 2.0], [1.0, 2.0]) == pytest.approx(1.0)
+
+
+def test_servicenow_fallback_data_contains_active_and_historical_incidents() -> None:
+    repository = ServiceNowFallbackRepository(PROJECT_ROOT / "data")
+
+    active = repository.load_active_incidents()
+    historical = repository.load_historical_incidents()
+
+    assert active[0].id == "INC-DEMO-ACTIVE-001"
+    assert active[0].resolved_at is None
+    assert historical[0].id == "INC-DEMO-HISTORICAL-001"
+    assert historical[0].resolved_at == "2026-07-22 10:45:00"
+
 
 async def test_low_similarity_runs_deployment_agent() -> None:
     class Store:

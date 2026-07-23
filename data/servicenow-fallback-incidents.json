@@ -1,0 +1,33 @@
+{
+  "active": [
+    {
+      "id": "INC-DEMO-ACTIVE-001",
+      "title": "Demo active checkout timeout",
+      "service": "checkout-api",
+      "severity": "P2",
+      "symptoms": "Demo fallback incident returned because ServiceNow is unavailable.",
+      "createdAt": "2026-07-23 09:00:00",
+      "updatedAt": "2026-07-23 09:15:00",
+      "rootCause": null,
+      "resolution": null,
+      "logs": null,
+      "attachments": []
+    }
+  ],
+  "historical": [
+    {
+      "id": "INC-DEMO-HISTORICAL-001",
+      "title": "Demo resolved payment timeout",
+      "service": "payment-api",
+      "severity": "P2",
+      "symptoms": "Demo fallback incident returned because ServiceNow is unavailable.",
+      "createdAt": "2026-07-22 10:00:00",
+      "resolvedAt": "2026-07-22 10:45:00",
+      "updatedAt": "2026-07-22 10:45:00",
+      "rootCause": "A simulated upstream timeout exhausted the connection pool.",
+      "resolution": "The connection pool was reset and a retry policy was applied.",
+      "logs": null,
+      "attachments": []
+    }
+  ]
+}

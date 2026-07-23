@@ -10,9 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agents.deployment_check import DeploymentCheckAgent
 from agents.code_investigation import CodeInvestigationAgent
-from core.config import Settings
+from core.config import PROJECT_ROOT, Settings
 from domain.models import AnalyzeRequest, HealthResponse, Incident, IncidentAnalysis
-from repositories.json_repository import DeploymentHistoryRepository
+from repositories.json_repository import DeploymentHistoryRepository, ServiceNowFallbackRepository
 from repositories.servicenow_repository import ServiceNowIncidentRepository
 from repositories.code_repository import GithubCodeRepository, JsonCodeRepository
 from services.advisor import IncidentAdvisor
@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.initialization_lock = asyncio.Lock()
     app.state.settings = None
     app.state.servicenow_repository = None
+    app.state.servicenow_fallback_repository = ServiceNowFallbackRepository(PROJECT_ROOT / "data")
     try:
         settings = Settings.from_environment()
         if not settings.servicenow_instance_url:
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "and SERVICENOW_PASSWORD."
             )
         app.state.settings = settings
+        app.state.servicenow_fallback_repository = ServiceNowFallbackRepository(settings.data_directory)
         app.state.servicenow_repository = ServiceNowIncidentRepository(
             settings.servicenow_instance_url,
             settings.servicenow_username,
@@ -141,8 +143,7 @@ async def historical_incidents(request: Request) -> list[Incident]:
         logger.info("Historical incidents endpoint returned %d records", len(incidents))
         return incidents
     except RuntimeError as error:
-        logger.warning("Historical incidents endpoint could not load ServiceNow records: %s", error)
-        raise HTTPException(status_code=503, detail=str(error)) from error
+        return await _load_servicenow_fallback(request, "historical", error)
 
 
 @app.get(
@@ -163,8 +164,36 @@ async def active_incidents(request: Request) -> list[Incident]:
         logger.info("Active incidents endpoint returned %d records", len(incidents))
         return incidents
     except RuntimeError as error:
-        logger.warning("Active incidents endpoint could not load ServiceNow records: %s", error)
-        raise HTTPException(status_code=503, detail=str(error)) from error
+        return await _load_servicenow_fallback(request, "active", error)
+
+
+async def _load_servicenow_fallback(
+    request: Request, incident_type: str, service_now_error: RuntimeError
+) -> list[Incident]:
+    """Return local demo data when ServiceNow cannot be reached."""
+    repository: ServiceNowFallbackRepository = request.app.state.servicenow_fallback_repository
+    try:
+        loader = (
+            repository.load_active_incidents
+            if incident_type == "active"
+            else repository.load_historical_incidents
+        )
+        incidents = await asyncio.to_thread(loader)
+    except RuntimeError as fallback_error:
+        logger.error(
+            "ServiceNow %s request failed (%s) and fallback data is unavailable: %s",
+            incident_type,
+            service_now_error,
+            fallback_error,
+        )
+        raise HTTPException(status_code=503, detail=str(service_now_error)) from fallback_error
+    logger.info(
+        "ServiceNow %s request failed (%s); returning %d fallback incidents.",
+        incident_type,
+        service_now_error,
+        len(incidents),
+    )
+    return incidents
 
 
 @app.post("/api/v1/incidents/analyze", response_model=IncidentAnalysis, tags=["incidents"])
