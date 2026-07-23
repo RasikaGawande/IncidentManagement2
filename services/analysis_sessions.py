@@ -111,7 +111,7 @@ class IncidentToolRegistry:
             raise ValueError(f"Tool '{name}' is not in the approved registry.")
         return await handler(session, arguments)
 
-  async def summarize_evidence(self, question: str, findings: list[AgentFinding]) -> AgentFinding:
+    async def summarize_evidence(self, question: str, findings: list[AgentFinding]) -> AgentFinding:
         """Use a dedicated LLM summarizer only when both chat specialists ran."""
         return await self._evidence_agents.summarize(question, findings)
 
@@ -195,7 +195,7 @@ class AnalysisChatService:
                 await self._sessions.touch(session)
                 flow.append(AgentFlowStep(agentName="ProdPlusIncidentAdvisor", status="COMPLETED"))
                 return AnalysisChatResponse(answer=narrative.answer, agentSummary=narrative.agent_summary, evidenceSummary=self._evidence_summary(session), codeChanges=narrative.code_changes, agentFlow=flow, sources=list(dict.fromkeys(sources)), newFindings=new_findings, agentCalls=calls)
-             round_findings: list[AgentFinding] = []
+            round_findings: list[AgentFinding] = []
             for call in tool_calls:
                 name = call.get("function", {}).get("name", "")
                 try:
@@ -213,13 +213,13 @@ class AnalysisChatService:
                 except (ValueError, json.JSONDecodeError, RuntimeError) as error:
                     content = json.dumps({"error": str(error)})
                 messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": content})
-                    evidence_specialists = [finding for finding in round_findings if finding.agent_name in {"GitHubEvidenceAgent", "SqlEvidenceAgent"}]
-                    if len(evidence_specialists) > 1:
-                        synthesis = await self._registry.summarize_evidence(message, evidence_specialists)
-                        new_findings.append(synthesis)
-                        session.agent_findings.append(synthesis)
-                        flow.append(AgentFlowStep(agentName=synthesis.agent_name, status=synthesis.status))
-                        messages.append({"role": "user", "content": "Approved combined GitHub and database evidence for this question:\n" + synthesis.evidence})
+            evidence_specialists = [finding for finding in round_findings if finding.agent_name in {"GitHubEvidenceAgent", "SqlEvidenceAgent"}]
+            if len(evidence_specialists) > 1:
+                synthesis = await self._registry.summarize_evidence(message, evidence_specialists)
+                new_findings.append(synthesis)
+                session.agent_findings.append(synthesis)
+                flow.append(AgentFlowStep(agentName=synthesis.agent_name, status=synthesis.status))
+                messages.append({"role": "user", "content": "Approved combined GitHub and database evidence for this question:\n" + synthesis.evidence})
         session.recent_messages = (messages[1:])[-12:]
         await self._sessions.touch(session)
         flow.append(AgentFlowStep(agentName="ProdPlusIncidentAdvisor", status="INCOMPLETE"))
