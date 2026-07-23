@@ -4,6 +4,7 @@ from agents.deployment_check import DeploymentCheckAgent
 from agents.code_investigation import CodeInvestigationAgent
 from domain.models import AgentFlowStep, Incident, IncidentAnalysis
 from services.advisor import IncidentAdvisor
+from services.confidence import assess_confidence
 from vector.store import IncidentStore
 
 class IncidentManagementService:
@@ -27,6 +28,7 @@ class IncidentManagementService:
         if incident.logs:
             findings.append(await self._code_agent.investigate(incident))
         assessment = await self._advisor.recommend(incident, matches, findings)
+        confidence = assess_confidence(incident, matches, findings, assessment)
         return IncidentAnalysis(
             incomingIncident=incident,
             similarIncidents=matches,
@@ -36,6 +38,7 @@ class IncidentManagementService:
             rca=assessment.rca,
             codeChanges=assessment.code_changes,
             evidenceSummary=self._evidence_summary(matches, findings),
+            confidence=confidence,
             agentFlow=[
                 AgentFlowStep(agentName="AzureAISearchAgent", status="COMPLETED"),
                 *[AgentFlowStep(agentName=finding.agent_name, status=finding.status) for finding in findings],
