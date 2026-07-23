@@ -12,6 +12,19 @@
       "resolution": null,
       "logs": null,
       "attachments": []
+    },
+    {
+      "id": "INC-7",
+      "title": "Database break",
+      "service": "transaction-validation-service",
+      "severity": "P3",
+      "symptoms": "dummy",
+      "createdAt": "2026-07-23 15:00:00",
+      "updatedAt": "2026-07-23 18:15:00",
+      "rootCause": null,
+      "resolution": null,
+      "logs": "2026-07-17T10:15:27.151Z ERROR transaction-validation-service request_id=REQ-1003 payment_id=PAY-482912 error_code=VALIDATION_FAILED Final validation attempt failed; Received null",
+      "attachments": []
     }
   ],
   "historical": [
